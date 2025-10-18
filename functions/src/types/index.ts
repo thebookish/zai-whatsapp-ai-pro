@@ -5,14 +5,6 @@ export type ProUser = {
   proSubscriptionStatus: string;
 };
 
-export type InboundWhatsApp = {
-  From?: string;
-  To?: string;
-  Body?: string;
-  MediaUrl0?: string;
-  MediaContentType0?: string;
-};
-
 export type MatchReport = {
   id: string;
   title: string;

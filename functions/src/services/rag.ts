@@ -11,14 +11,18 @@ import {
 import { buildPrompt } from "../promts/templates";
 import { logger } from "../logger";
 import { MatchReport, Player, Team, Coach } from "../types";
+import { getMemory, setMemory } from "./conversationMemory";
 
+// ---------------- Gemini setup ----------------
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 const GENERATE_MODEL = "gemini-2.0-flash";
 
 // ---------- COSINE SIM ----------
 function cosineSim(a: number[], b: number[]) {
   if (!a?.length || !b?.length || a.length !== b.length) return 0;
-  let dot = 0, na = 0, nb = 0;
+  let dot = 0,
+    na = 0,
+    nb = 0;
   for (let i = 0; i < a.length; i++) {
     const x = a[i] || 0;
     const y = b[i] || 0;
@@ -46,6 +50,7 @@ async function topK<T extends { id: string; embedding?: number[] }>(
   return scored.slice(0, k).map((s) => s.id);
 }
 
+// ---------- HYDRATE DOCS ----------
 async function hydrateData(
   reportIds: string[],
   playerIds: string[],
@@ -63,17 +68,55 @@ async function hydrateData(
     arr.length ? `### ${label}\n${arr.map(fmt).join("\n\n---\n\n")}\n` : "";
 
   return [
-    make("Match Reports", reports, (r) => `**${r.title}**\n${r.text}\n${r.url ? `URL: ${r.url}` : ""}`),
-    make("Players", players, (p) => `**${p.name}** (${p.position}, ${p.teamId})\nStrengths: ${p.strengths}\nStats: ${JSON.stringify(p.stats ?? {})}`),
-    make("Teams", teams, (t) => `**${t.name}** (${t.division})\nFormation: ${t.formation}\nStyle: ${t.style}`),
-    make("Coaches", coaches, (c) => `**${c.name}** (${c.teamId})\nExperience: ${c.experience}\nPhilosophy: ${c.philosophy}`),
+    make(
+      "Match Reports",
+      reports,
+      (r) =>
+        `**${r.title}**\n${r.text}\n${r.url ? `URL: ${r.url}` : ""}`
+    ),
+    make(
+      "Players",
+      players,
+      (p) =>
+        `**${p.name}** (${p.position}, ${p.teamId})\nStrengths: ${p.strengths}\nStats: ${JSON.stringify(
+          p.stats ?? {}
+        )}`
+    ),
+    make(
+      "Teams",
+      teams,
+      (t) =>
+        `**${t.name}** (${t.division})\nFormation: ${t.formation}\nStyle: ${t.style}`
+    ),
+    make(
+      "Coaches",
+      coaches,
+      (c) =>
+        `**${c.name}** (${c.teamId})\nExperience: ${c.experience}\nPhilosophy: ${c.philosophy}`
+    ),
   ].join("\n\n");
 }
 
-async function retrieveContext(query: string): Promise<string> {
+// ---------- RETRIEVE CONTEXT ----------
+async function retrieveContext(
+  query: string,
+  sessionId: string
+): Promise<{ context: string; detected: { type: string; name: string } | null }> {
   try {
-    const [queryVec] = await embedText([query]);
-    if (!queryVec?.length) return "";
+    let effectiveQuery = query;
+    const memory = getMemory(sessionId);
+
+    // 🧠 Use memory when user uses pronouns
+    if (
+      memory &&
+      /\b(he|his|her|they|their|that team|that coach|that player)\b/i.test(query)
+    ) {
+      effectiveQuery = `${query} (referring to ${memory.name})`;
+      logger.info({ effectiveQuery, memory }, "💡 Using memory context");
+    }
+
+    const [queryVec] = await embedText([effectiveQuery]);
+    if (!queryVec?.length) return { context: "", detected: null };
 
     const [reports, players, teams, coaches] = await Promise.all([
       listMatchReports(config.fsScanLimit),
@@ -89,31 +132,81 @@ async function retrieveContext(query: string): Promise<string> {
       topK(queryVec, coaches),
     ]);
 
-    return await hydrateData(reportIds, playerIds, teamIds, coachIds);
-  } catch (e) {
-    logger.error({ err: e }, "retrieveContext failed");
-    return "";
+    const context = await hydrateData(reportIds, playerIds, teamIds, coachIds);
+
+    // 🧩 Identify most likely entity and store it in memory
+    let detected: { type: string; name: string } | null = null;
+
+    if (playerIds.length) {
+      const player = players.find((p) => p.id === playerIds[0]);
+      if (player) detected = { type: "player", name: player.name };
+    } else if (coachIds.length) {
+      const coach = coaches.find((c) => c.id === coachIds[0]);
+      if (coach) detected = { type: "coach", name: coach.name };
+    } else if (teamIds.length) {
+      const team = teams.find((t) => t.id === teamIds[0]);
+      if (team) detected = { type: "team", name: team.name };
+    } else if (reportIds.length) {
+      const report = reports.find((r) => r.id === reportIds[0]);
+      if (report) detected = { type: "match", name: report.title };
+    }
+
+    if (detected) {
+      setMemory(sessionId, detected.type as any, detected.name);
+      logger.info({ sessionId, detected }, "🧠 Memory updated");
+    }
+
+    return { context, detected };
+  } catch (err) {
+    logger.error({ err }, "❌ retrieveContext failed");
+    return { context: "", detected: null };
   }
 }
 
-// ---------- GENERATE ANSWER ----------
-export async function generateWithRAG(query: string, userId: string): Promise<string> {
+// ---------- GENERATE WITH MEMORY-AWARE RAG ----------
+export async function generateWithRAG(
+  query: string,
+  sessionId: string
+): Promise<string> {
   const model = genAI.getGenerativeModel({ model: GENERATE_MODEL });
 
-  const context = await retrieveContext(query);
+  // 🧠 Check for existing memory context
+  const memory = getMemory(sessionId);
+  let effectiveQuery = query;
+
+  if (
+    memory &&
+    /\b(he|his|her|they|their|that team|that coach|that player)\b/i.test(query)
+  ) {
+    effectiveQuery = `${query} (referring to ${memory.name})`;
+    logger.info({ sessionId, effectiveQuery }, "🔁 Memory reused");
+  }
+
+  // 🔍 Retrieve RAG context
+  const { context, detected } = await retrieveContext(effectiveQuery, sessionId);
+
+  // 💾 Update memory if new entity found
+  if (detected) setMemory(sessionId, detected.type as any, detected.name);
+
+  // 🧩 Build prompt
   const prompt = buildPrompt({
-    userId,
-    userQuestion: query,
+    userId: sessionId,
+    userQuestion: effectiveQuery,
     hydratedContext: context,
     options: { domain: "football", maxWords: 220 },
   });
 
+  // ✨ Generate final response
   try {
     const result = await model.generateContent(prompt);
     const text = result?.response?.text?.() ?? "";
-    return text.trim() || "I'm not finding enough context to answer that.";
+
+    if (!text.trim())
+      return "Hmm, I couldn’t find much about that — could you share a bit more detail? ⚽️";
+
+    return text.trim();
   } catch (err) {
-    logger.error({ err }, "generateWithRAG failed");
-    return "Sorry, something went wrong while generating your response.";
+    logger.error({ err }, "❌ generateWithRAG failed");
+    return "Oops, something went wrong while I was checking that. Could you rephrase your question?";
   }
 }

@@ -65,7 +65,7 @@ export function validateTwilioSignature(
 
 
 export async function sendWhatsAppText(client: Twilio, fromNum: string, toNum: string, body: string) {
-  await client.messages.create({ body, from: fromNum, to: `whatsapp:${toNum}` });
+  await client.messages.create({ body, from: `whatsapp:${fromNum}`, to: `whatsapp:${toNum}` });
 }
 
 export async function sendWhatsAppMedia(client: Twilio, fromNum: string, toNum: string, mediaUrl: string, body?: string) {

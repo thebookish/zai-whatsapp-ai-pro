@@ -4,14 +4,14 @@
  * Lightweight in-memory conversational memory
  * for Zai’s context-aware chat continuity.
  *
- * 🧠 Purpose:
+ *  Purpose:
  *   - Tracks the most recent entity the user asked about
  *     (player, coach, team, or match).
  *   - Enables natural follow-up questions using pronouns
  *     (e.g., “his coach”, “their formation”).
  *   - Expires automatically after 30 minutes of inactivity.
  *
- * ⚙️ Design:
+ *  Design:
  *   - Uses a Map keyed by session ID.
  *   - Simple to replace with Firestore or Redis if persistence is needed.
  */
@@ -25,7 +25,7 @@ export type MemoryEntry = {
   timestamp: number;
 };
 
-// 🕒 Memory expiry (30 minutes)
+//  Memory expiry (30 minutes)
 const MEMORY_TIMEOUT_MS = 30 * 60 * 1000;
 
 // In-memory session memory

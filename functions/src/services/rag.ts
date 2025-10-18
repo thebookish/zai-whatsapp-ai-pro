@@ -106,7 +106,7 @@ async function retrieveContext(
     let effectiveQuery = query;
     const memory = getMemory(sessionId);
 
-    // 🧠 Use memory when user uses pronouns
+    //  Use memory when user uses pronouns
     if (
       memory &&
       /\b(he|his|her|they|their|that team|that coach|that player)\b/i.test(query)
@@ -134,7 +134,7 @@ async function retrieveContext(
 
     const context = await hydrateData(reportIds, playerIds, teamIds, coachIds);
 
-    // 🧩 Identify most likely entity and store it in memory
+    //  Identify most likely entity and store it in memory
     let detected: { type: string; name: string } | null = null;
 
     if (playerIds.length) {
@@ -153,12 +153,12 @@ async function retrieveContext(
 
     if (detected) {
       setMemory(sessionId, detected.type as any, detected.name);
-      logger.info({ sessionId, detected }, "🧠 Memory updated");
+      logger.info({ sessionId, detected }, "Memory updated");
     }
 
     return { context, detected };
   } catch (err) {
-    logger.error({ err }, "❌ retrieveContext failed");
+    logger.error({ err }, "retrieveContext failed");
     return { context: "", detected: null };
   }
 }
@@ -170,7 +170,7 @@ export async function generateWithRAG(
 ): Promise<string> {
   const model = genAI.getGenerativeModel({ model: GENERATE_MODEL });
 
-  // 🧠 Check for existing memory context
+  //  Check for existing memory context
   const memory = getMemory(sessionId);
   let effectiveQuery = query;
 
@@ -179,16 +179,16 @@ export async function generateWithRAG(
     /\b(he|his|her|they|their|that team|that coach|that player)\b/i.test(query)
   ) {
     effectiveQuery = `${query} (referring to ${memory.name})`;
-    logger.info({ sessionId, effectiveQuery }, "🔁 Memory reused");
+    logger.info({ sessionId, effectiveQuery }, "Memory reused");
   }
 
-  // 🔍 Retrieve RAG context
+  //  Retrieve RAG context
   const { context, detected } = await retrieveContext(effectiveQuery, sessionId);
 
-  // 💾 Update memory if new entity found
+  //  Update memory if new entity found
   if (detected) setMemory(sessionId, detected.type as any, detected.name);
 
-  // 🧩 Build prompt
+  //  Build prompt
   const prompt = buildPrompt({
     userId: sessionId,
     userQuestion: effectiveQuery,
@@ -196,7 +196,7 @@ export async function generateWithRAG(
     options: { domain: "football", maxWords: 220 },
   });
 
-  // ✨ Generate final response
+  //  Generate final response
   try {
     const result = await model.generateContent(prompt);
     const text = result?.response?.text?.() ?? "";
@@ -206,7 +206,7 @@ export async function generateWithRAG(
 
     return text.trim();
   } catch (err) {
-    logger.error({ err }, "❌ generateWithRAG failed");
+    logger.error({ err }, "generateWithRAG failed");
     return "Oops, something went wrong while I was checking that. Could you rephrase your question?";
   }
 }
